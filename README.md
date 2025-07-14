@@ -35,3 +35,7 @@ This repository provides a framework to compute **catchment-averaged daily meteo
 
 This project requires Python 3.9+
 
+## License
+
+The contents of this repository is distributed under the Attribution-ShareAlike 4.0 International license [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/https://creativecommons.org/licenses/by-sa/4.0/).  See the LICENSE.txt file.
+
