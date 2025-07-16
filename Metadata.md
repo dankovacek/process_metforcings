@@ -20,10 +20,21 @@ This dataset provides catchment-averaged daily meteorological time series for se
 - Day length (dayl)  
 - Potential evapotranspiration (PET), computed using the Penman-Monteith method via the PyDaymet package
 
-Catchment boundaries were provided as GeoJSON files and used to clip and average Daymet tiles. The resulting NetCDF files contain either full spatial resolution over each catchment or a single averaged time series, depending on configuration.
+Catchment boundaries were used to clip and average Daymet tiles (provided in Catchment_polygons.geojson). The NetCDF files in this directory contain time series representing catchment average meteorological forcings.  The files are provided in the format required for ingesting into the [NeuralHydrology Python Package](https://neuralhydrology.readthedocs.io/en/latest/) for research in applying neural networks to hydrological prediction.   
 
-Data were generated using the `process_metforcings` Python repository available at:  
+The data were generated using the scripts provided in the `process_metforcings` Python repository available at:  
 [https://github.com/dankovacek/process_metforcings](https://github.com/dankovacek/process_metforcings)
+
+### Files
+
+* meteorological forcings following the format `<Official_ID>_daymet.nc` (compressed in the archive file `BC_Monitored_catchment_mean_met_forcings_20250320.zip`)  
+  - Contains daily time series of the meteorological variables listed above, averaged over the catchment polygon defined in `Catchment_polygons.geojson`.
+* `Catchment_polygons.geojson`  
+  - Contains the catchment polygons used for clipping and averaging Daymet tiles. Each polygon is associated with an `Official_ID` that matches the naming convention of the output NetCDF files.
+
+
+### NOTE:
+> The netCDF (`.nc`) files are not formatted for display in GIS software.  It is recommended to use the [xarray](https://docs.xarray.dev/en/stable/) python package to work with these files.
 
 ## Subject
 

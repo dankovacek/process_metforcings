@@ -6,11 +6,11 @@ from __future__ import annotations
 # generate basins
 import os
 from time import time
-# import dask
-# import glob
 from pyproj import CRS
 import multiprocessing as mp
 import warnings
+
+from shapely.geometry import Point
 
 warnings.filterwarnings("ignore")
 
@@ -91,15 +91,18 @@ region_codes = [
 daymet_tile_dir = "/media/danbot2/T7_2TB"
 daymet_tile_dir = "/media/danbot2/easystore/daymet_tiles/"
 
+point_crs = CRS.from_epsg(4326)  # WGS 84
+
 # catchment geometry files
 # revision date
 rev_date = '20250227'
 catchment_fpath = os.path.join(BASE_DIR, 'input_data', f'BCUB_watershed_attributes_updated_{rev_date}.geojson')
 
 # daymet_tile_dir = os.path.join(BASE_DIR, "input_data/DAYMET/")
-daymet_output_dir = os.path.join(BASE_DIR, "processed_stns/")
-daymet_output_dir = '/media/danbot2/easystore/BCUB_met_forcings_20250320/'
-daymet_mean_output_dir = '/media/danbot2/easystore/BCUB_catchment_mean_met_forcings_20250320/'
+# daymet_output_dir = os.path.join(BASE_DIR, "processed_stns/")
+# daymet_output_dir = '/media/danbot2/easystore/PNW_catchment_mean_met_forcings_20250320/'
+daymet_output_dir = os.path.join(BASE_DIR, "PNW_catchment_mean_met_forcings_20250320/")
+daymet_mean_output_dir = os.path.join(BASE_DIR, "PNW_catchment_mean_met_forcings_20250320_backup/")
 
 # daymet_tile_dir = os.path.join(BASE_DIR, "input_data/DAYMET/")
 daymet_crs = "+proj=lcc +lat_1=25 +lat_2=60 +lat_0=42.5 +lon_0=-100 +x_0=0 +y_0=0 +ellps=WGS84 +units=m +no_defs"
@@ -124,11 +127,17 @@ else:
     # sample.to_file(sample_fpath, driver="GeoJSON")
     # print(asdfasd)
 
+existing_files = os.listdir(daymet_mean_output_dir)
+existing_stns = [f.split('_')[0] for f in existing_files if f.endswith('.nc')]
 
 daymet_params = ["tmax", "tmin", "vp", "prcp", "swe", "srad", "dayl"]
 
 catchment_gdf = catchment_gdf.sort_values("Drainage_Area_km2").reset_index(drop=True)
-
+stn_polygons = catchment_gdf[["Official_ID", "Centroid_Lat_deg_N", "Centroid_Lon_deg_E", "geometry"]].copy()
+catchment_locations_file = os.path.join(BASE_DIR, 'input_data', "Catchment_polygons.geojson")
+if not os.path.exists(catchment_locations_file):
+    stn_polygons = stn_polygons[stn_polygons['Official_ID'].isin(existing_stns)]
+    stn_polygons.to_file(catchment_locations_file, driver="GeoJSON")
 
 def get_covering_daymet_tile_ids(polygon):
 
@@ -423,7 +432,7 @@ def get_bygeom(
     return clm
 
 
-def process_and_save_catchment_mean(in_fpath, out_fpath):
+def process_and_save_catchment_mean(stn, in_fpath, out_fpath, lat, lon):
     """Compute the catchment spatial mean of climate parameters in a netcdf file."""
     ds = xr.open_dataset(in_fpath)
     ds_mean = ds.mean(dim=['x', 'y'], skipna=True)
@@ -437,6 +446,7 @@ for i, catchment_data in catchment_gdf.iterrows():
     catchment = catchment_gdf.loc[[i]].copy()
     area = catchment.geometry.area.values[0] / 1.0e6
     da = catchment_data["Drainage_Area_km2"]
+    lat, lon = catchment_data['Centroid_Lat_deg_N'], catchment_data['Centroid_Lon_deg_E']
     assert np.isclose(da, area, rtol=5e-2), f"Drainage area mismatch > 5%: {da:.1f} vs {area:.1f}"
     # pass
     
@@ -444,14 +454,24 @@ for i, catchment_data in catchment_gdf.iterrows():
     out_fpath = os.path.join(daymet_output_dir, f"{stn}_daymet.nc")
     mean_fpath = os.path.join(daymet_mean_output_dir, f'{stn}_daymet.nc')
 
-    if os.path.exists(out_fpath):
-        print(f'    ...{stn} already processed.')        
-        if not os.path.exists(mean_fpath):
-            ds = process_and_save_catchment_mean(out_fpath, mean_fpath)
-        continue
+    # if os.path.exists(out_fpath):
+    #     print(f'    ...{stn} already processed.')
+    #     if not os.path.exists(mean_fpath):
+    #         ds = process_and_save_catchment_mean(out_fpath, mean_fpath)
+    #     continue
+    # else:
+    #     print(out_fpath)
+    #     print('crap')
+    #     print(asdfasd)
 
     if compute_catchment_mean:
         if os.path.exists(mean_fpath):
+            # check that latitude and longitude are explicit coordinate variables, 
+            # and format the file as a point-feature NetCDF
+            ds = xr.open_dataset(mean_fpath)
+            # if 'lat' not in ds.coords or 'lon' not in ds.coords:
+            print(f'    ...{stn} mean file exists but lat/lon are not coordinates, reprocessing...')
+            process_and_save_catchment_mean(stn, mean_fpath, out_fpath, lat, lon)
             print(f'    ...{stn} mean already processed.')
             continue
 
@@ -487,7 +507,8 @@ for i, catchment_data in catchment_gdf.iterrows():
 
     if compute_catchment_mean:
         merged_ds = xr.concat(all_params, dim='time')
-        merged_ds = merged_ds.rio.write_crs(daymet_crs)
+        # merged_ds = merged_ds.rio.write_crs('EPSG:4326')  # if needed, for georeferencing
+        # merged_ds = merged_ds.rio.write_crs(daymet_crs)
         out_fpath = os.path.join(daymet_mean_output_dir, f'{stn}_daymet.nc')
     else:
         # check dimensions for consistency
