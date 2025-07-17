@@ -103,6 +103,7 @@ catchment_fpath = os.path.join(BASE_DIR, 'input_data', f'BCUB_watershed_attribut
 # daymet_output_dir = '/media/danbot2/easystore/PNW_catchment_mean_met_forcings_20250320/'
 daymet_output_dir = os.path.join(BASE_DIR, "PNW_catchment_mean_met_forcings_20250320/")
 daymet_mean_output_dir = os.path.join(BASE_DIR, "PNW_catchment_mean_met_forcings_20250320_backup/")
+daymet_mean_output_dir = '/home/danbot2/code_5820/neuralhydrology/bcub_test/bcub_data/bcub/time_series'
 
 # daymet_tile_dir = os.path.join(BASE_DIR, "input_data/DAYMET/")
 daymet_crs = "+proj=lcc +lat_1=25 +lat_2=60 +lat_0=42.5 +lon_0=-100 +x_0=0 +y_0=0 +ellps=WGS84 +units=m +no_defs"
@@ -138,6 +139,20 @@ catchment_locations_file = os.path.join(BASE_DIR, 'input_data', "Catchment_polyg
 if not os.path.exists(catchment_locations_file):
     stn_polygons = stn_polygons[stn_polygons['Official_ID'].isin(existing_stns)]
     stn_polygons.to_file(catchment_locations_file, driver="GeoJSON")
+
+# define the metadata for variables
+variable_metadata = {
+    "dayl":  {'long_name': 'daylength', 'units': 's', 'cell_methods': 'area: mean', },
+    "prcp":  {'long_name': 'daily total precipitation', 'units': 'mm day-1', 'cell_methods': 'area: mean time: sum', },
+    "srad":  {'long_name': 'daylight average incident shortwave radiation', 'units': 'W m-2', 'cell_methods': 'area: mean time: mean', },
+    "swe":   {'long_name': 'snow water equivalent', 'units': 'kg m-2', 'cell_methods': 'area: mean time: mean', },
+    "tmax":  {'long_name': 'daily maximum temperature', 'units': 'degrees C', 'cell_methods': 'area: mean time: maximum', },
+    "tmin":  {'long_name': 'daily minimum temperature', 'units': 'degrees C', 'cell_methods': 'area: mean time: minimum', },
+    "vp":    {'long_name': 'daily average vapor pressure', 'units': 'Pa', 'cell_methods': 'area: mean time: mean', },
+    "pet":   {'long_name': 'potential evapotranspiration', 'units': 'mm day-1', 'cell_methods': 'area: mean time: sum', },
+    "streamflow": {'long_name': 'daily average streamflow', 'units': 'm3 s-1', 'cell_methods': 'area: mean time: mean', },
+    "elevation":   {'long_name': 'elevation above sea level', 'units': 'm', 'cell_methods': 'area: mean time: mean', }
+}
 
 def get_covering_daymet_tile_ids(polygon):
 
@@ -432,13 +447,38 @@ def get_bygeom(
     return clm
 
 
-def process_and_save_catchment_mean(stn, in_fpath, out_fpath, lat, lon):
-    """Compute the catchment spatial mean of climate parameters in a netcdf file."""
-    ds = xr.open_dataset(in_fpath)
-    ds_mean = ds.mean(dim=['x', 'y'], skipna=True)
-    ds_mean.to_netcdf(out_fpath)
-    del ds
-    print(f'    ...{out_fpath} written.')
+def reformat_dataset(ds):
+    # 1. Define time and point location
+    for v in ds.data_vars:
+        if v not in variable_metadata:
+            # drop the variable if it is not in the metadata
+            ds.drop_vars(v)
+            continue
+        ds[v].attrs.update(variable_metadata[v])
+    # add global attributes
+    title = 'Processed Catchment-Averaged Meteorological Forcings from Daymet for Streamflow Monitored Catchments in British Columbia and Transboundary Basins'
+    ds.attrs.update({
+        'title': title, 
+        'institution': 'University of British Columbia',
+        'source': 'Daymet, HYSETS',
+        'history': f'Processed on 2025-03-20',
+        'references': ['https://daymet.ornl.gov/overview', 'https://osf.io/rpc3w/'],
+        'comment': 'This dataset contains catchment-averaged meteorological forcings from Daymet and streamflow from USGS and ECCC for streamflow monitored catchments in British Columbia and Transboundary Basins.',
+        'creator_name': 'Dan Kovacek, P.Eng. dkovacek@mail.ubc.ca',
+        'keywords': [
+            'Daymet (climate forcings)',
+            'catchment',
+            'meteorological forcings',
+            'potential evapotranspiration',
+            'precipitation',
+            'temperature'
+        ],
+        'featureType': 'timeSeries',
+        'cdm_data_type': 'Station',
+        'source': 'Hydrometric data from USGS National Water Information Service, ECCC Water Survey Canada. Meteorological data from Daymet. Catchment polygons from ECCC HYDAT and USGS.'
+    })
+    return ds
+
 
 
 for i, catchment_data in catchment_gdf.iterrows():
@@ -446,81 +486,80 @@ for i, catchment_data in catchment_gdf.iterrows():
     catchment = catchment_gdf.loc[[i]].copy()
     area = catchment.geometry.area.values[0] / 1.0e6
     da = catchment_data["Drainage_Area_km2"]
-    lat, lon = catchment_data['Centroid_Lat_deg_N'], catchment_data['Centroid_Lon_deg_E']
-    assert np.isclose(da, area, rtol=5e-2), f"Drainage area mismatch > 5%: {da:.1f} vs {area:.1f}"
+    # lat, lon = catchment_data['Centroid_Lat_deg_N'], catchment_data['Centroid_Lon_deg_E']
+    # assert np.isclose(da, area, rtol=5e-2), f"Drainage area mismatch > 5%: {da:.1f} vs {area:.1f}"
     # pass
     
     stn = catchment_data["Official_ID"]
     out_fpath = os.path.join(daymet_output_dir, f"{stn}_daymet.nc")
-    mean_fpath = os.path.join(daymet_mean_output_dir, f'{stn}_daymet.nc')
-
-    # if os.path.exists(out_fpath):
-    #     print(f'    ...{stn} already processed.')
-    #     if not os.path.exists(mean_fpath):
-    #         ds = process_and_save_catchment_mean(out_fpath, mean_fpath)
-    #     continue
-    # else:
-    #     print(out_fpath)
-    #     print('crap')
-    #     print(asdfasd)
+    mean_fpath = os.path.join(daymet_mean_output_dir, f'{stn}.nc')
 
     if compute_catchment_mean:
         if os.path.exists(mean_fpath):
             # check that latitude and longitude are explicit coordinate variables, 
             # and format the file as a point-feature NetCDF
             ds = xr.open_dataset(mean_fpath)
-            # if 'lat' not in ds.coords or 'lon' not in ds.coords:
-            print(f'    ...{stn} mean file exists but lat/lon are not coordinates, reprocessing...')
-            process_and_save_catchment_mean(stn, mean_fpath, out_fpath, lat, lon)
+            ds_new = reformat_dataset(ds)
+            # drop 'spatial_ref' coordinate variable if it exists
+            if 'spatial_ref' in ds_new.coords:
+                ds_new = ds_new.drop_vars('spatial_ref')
+
+            # drop 'lambert_conformal_conic' variable if it exists
+            if 'lambert_conformal_conic' in ds_new.variables:
+                ds_new = ds_new.drop_vars('lambert_conformal_conic')
+
+            # ds_new.rio.write_crs('EPSG:4326', inplace=True)  # write the CRS to the dataset
+            ds_new.to_netcdf(out_fpath, format="NETCDF4", engine="netcdf4")
+            print(f'    ...{out_fpath} written.')
             print(f'    ...{stn} mean already processed.')
             continue
 
     t0 = time()
-    print(f' {i} Processing {stn} ({area:.1f})...')
+    # print(asdfsd)
         
-    if da < 2:
-        print('Area less than 2 km^2, using convex hull since Daymet resolution is 1km..')
-        catchment.geometry = catchment.convex_hull
-    elif da < 10:
-        polygon = catchment_gdf.loc[[i]].simplify(100)
-    else:
-        polygon = catchment_gdf.loc[[i]].simplify(200)
+    # if da < 2:
+    #     print('Area less than 2 km^2, using convex hull since Daymet resolution is 1km..')
+    #     catchment.geometry = catchment.convex_hull
+    # elif da < 10:
+    #     polygon = catchment_gdf.loc[[i]].simplify(100)
+    # else:
+    #     polygon = catchment_gdf.loc[[i]].simplify(200)
 
-    all_params = []
-    for year in list(range(1980, 2024)):
-        ds = get_bygeom(
-            geometry=catchment.geometry.values[0],
-            variables=daymet_params,
-            dates=[year],
-            crs=catchment_gdf.crs,
-            region='na',
-            time_scale="daily",
-            pet='penman_monteith',
-        )
-        if compute_catchment_mean:
-            # compute spatial mean
-            ds = ds.mean(dim=['x', 'y'], skipna=True)
-        all_params.append(ds)
-        if year % 10 == 0:
-            t1 = time()
-            print(f"    Time to process {year}: {t1-t0:.0f}s")
+    # all_params = []
+    # for year in list(range(1980, 2024)):
+    #     ds = get_bygeom(
+    #         geometry=catchment.geometry.values[0],
+    #         variables=daymet_params,
+    #         dates=[year],
+    #         crs=catchment_gdf.crs,
+    #         region='na',
+    #         time_scale="daily",
+    #         pet='penman_monteith',
+    #     )
+    #     if compute_catchment_mean:
+    #         # compute spatial mean
+    #         ds = ds.mean(dim=['x', 'y'], skipna=True)
+    #     all_params.append(ds)
+    #     if year % 10 == 0:
+    #         t1 = time()
+    #         print(f"    Time to process {year}: {t1-t0:.0f}s")
 
-    if compute_catchment_mean:
-        merged_ds = xr.concat(all_params, dim='time')
-        # merged_ds = merged_ds.rio.write_crs('EPSG:4326')  # if needed, for georeferencing
-        # merged_ds = merged_ds.rio.write_crs(daymet_crs)
-        out_fpath = os.path.join(daymet_mean_output_dir, f'{stn}_daymet.nc')
-    else:
-        # check dimensions for consistency
-        base_vals = all_params[0].lat.values
-        if np.all(np.allclose(base_vals, d.lat.values) for d in all_params[1:]):
-            merged_ds = xr.concat(all_params, dim='time')
-            merged_ds = merged_ds.rio.write_crs(daymet_crs)
-        else:
-            print('latitudes are not the same')
-            continue
+    # if compute_catchment_mean:
+    #     merged_ds = xr.concat(all_params, dim='time')
+    #     # merged_ds = merged_ds.rio.write_crs('EPSG:4326')  # if needed, for georeferencing
+    #     # merged_ds = merged_ds.rio.write_crs(daymet_crs)
+    #     out_fpath = os.path.join(daymet_mean_output_dir, f'{stn}_daymet.nc')
+    # else:
+    #     # check dimensions for consistency
+    #     base_vals = all_params[0].lat.values
+    #     if np.all(np.allclose(base_vals, d.lat.values) for d in all_params[1:]):
+    #         merged_ds = xr.concat(all_params, dim='time')
+    #         merged_ds = merged_ds.rio.write_crs(daymet_crs)
+    #     else:
+    #         print('latitudes are not the same')
+    #         continue
 
-    merged_ds.to_netcdf(out_fpath)
-    t2 = time()
-    print(f'    Time to process and write {stn}: {(t2-t0)/60:.1f}min.')
-    del merged_ds
+    # merged_ds.to_netcdf(out_fpath)
+    # t2 = time()
+    # print(f'    Time to process and write {stn}: {(t2-t0)/60:.1f}min.')
+    # del merged_ds

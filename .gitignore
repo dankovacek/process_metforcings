@@ -1,5 +1,6 @@
 __pycache__/
 superseded/
 PNW_catchment_mean_met_forcings_20250320/*
+BC_Monitored_catchment_mean_met_forcings_20250320/*
 input_data/*.geojson
 *.zip
